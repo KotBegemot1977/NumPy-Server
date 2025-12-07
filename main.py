@@ -3,7 +3,13 @@ from pydantic import BaseModel
 import numpy as np
 import uvicorn
 import re
+import matplotlib
+matplotlib.use('Agg') # <-- КРИТИЧЕСКАЯ СТРОКА!
+import matplotlib.pyplot as plt
+import io
+import base64
 
+# --- Настройка FastAPI ---
 app = FastAPI()
 
 class PumpData(BaseModel):
@@ -11,7 +17,7 @@ class PumpData(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "RusPump API (Stable Text Only) is running"}
+    return {"status": "RusPump API (Cubic Poly + Graph) is running"}
 
 @app.post("/calculate_poly")
 def calculate_poly(data: PumpData):
@@ -20,30 +26,51 @@ def calculate_poly(data: PumpData):
         numbers = [float(s) for s in re.findall(r'-?\d+\.?\d*', data.raw_text)]
 
         if len(numbers) < 8 or len(numbers) % 2 != 0:
-            return {"error": "Нужно минимум 4 точки (8 чисел)."}
+            return {"error": "Ошибка: Для построения кубического полинома требуется минимум 4 пары чисел (Q H)."}
 
-        q_vals = np.array(numbers[0::2])
-        h_vals = np.array(numbers[1::2])
+        q_user = np.array(numbers[0::2])
+        h_user = np.array(numbers[1::2])
 
-        # 2. Расчет полинома 3-й степени
-        coefficients = np.polyfit(q_vals, h_vals, 3)
+        # 2. Математика (Полином 3-й степени)
+        coefficients = np.polyfit(q_user, h_user, 3)
+        poly_func = np.poly1d(coefficients)
         a, b, c, d = coefficients
 
-        # 3. Расчет R^2
-        poly_func = np.poly1d(coefficients)
-        h_pred = poly_func(q_vals)
-        y_mean = np.mean(h_vals)
-        ss_tot = np.sum((h_vals - y_mean)**2)
-        ss_res = np.sum((h_vals - h_pred)**2)
+        # Расчет R^2
+        h_pred = poly_func(q_user)
+        y_mean = np.mean(h_user)
+        ss_tot = np.sum((h_user - y_mean)**2)
+        ss_res = np.sum((h_user - h_pred)**2)
+        r_squared = 1.0 if ss_tot == 0 else 1 - (ss_res / ss_tot)
 
-        if ss_tot == 0:
-            r_squared = 1.0
-        else:
-            r_squared = 1 - (ss_res / ss_tot)
+        # 3. ГЕНЕРАЦИЯ ГРАФИКА
+        plt.figure(figsize=(10, 6))
 
+        # Строим плавную кривую (Q max + 10%)
+        q_smooth = np.linspace(0, max(q_user) * 1.1, 100)
+        h_smooth = poly_func(q_smooth)
+
+        # Визуализация (Стандарт RusPump)
+        plt.plot(q_smooth, h_smooth, 'b-', label='Аппроксимация (Полином 3 ст.)', linewidth=2)
+        plt.plot(q_user, h_user, 'ro', label='Исходные точки', markersize=8)
+
+        plt.title(f"Характеристика насоса Q-H (R²={r_squared:.4f})")
+        plt.xlabel("Расход Q, м³/ч")
+        plt.ylabel("Напор H, м")
+        plt.grid(True, which='both', linestyle='--')
+        plt.legend()
+
+        # Сохранение в буфер памяти
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()
+
+        # Кодируем в Base64 для передачи через JSON
+        image_base64 = base64.b64encode(buf.read()).decode('utf-8')
+
+        # 4. Формирование текста ответа
         quality_emoji = "✅" if r_squared > 0.98 else "⚠️" if r_squared > 0.9 else "❌"
-
-        # 4. Формирование формул
         sb = "+" if b >= 0 else ""
         sc = "+" if c >= 0 else ""
         sd = "+" if d >= 0 else ""
@@ -53,16 +80,12 @@ def calculate_poly(data: PumpData):
         ex_comma = ex_dot.replace(".", ",")
 
         return {
-            "r2": r_squared,
+            "image_base64": image_base64,
             "message": (
-                f"📈 *Результат расчета:*\n\n"
-                f"`{visual_eq}`\n\n"
-                f"{quality_emoji} **R²:** {r_squared*100:.2f}%\n\n"
-                f"📋 *Для Excel (EN/IT - точка):*\n"
-                f"`{ex_dot}`\n\n"
-                f"🇷🇺 *Для Excel (RU - запятая):*\n"
-                f"`{ex_comma}`\n\n"
-                f"_(В формулах Q заменено на ячейку A1)_"
+                f"📈 *Результат расчета:*\n`{visual_eq}`\n"
+                f"{quality_emoji} **Точность (R²):** {r_squared*100:.2f}%\n\n"
+                f"📋 *Excel (EN):* `{ex_dot}`\n"
+                f"🇷🇺 *Excel (RU):* `{ex_comma}`"
             )
         }
 
@@ -70,4 +93,4 @@ def calculate_poly(data: PumpData):
         return {"error": f"Ошибка: {str(e)}"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=5000)
+    uvicorn.run(app, host="0.0.0.0", port=5000) # Используем порт 5000, который вы зафиксировали
