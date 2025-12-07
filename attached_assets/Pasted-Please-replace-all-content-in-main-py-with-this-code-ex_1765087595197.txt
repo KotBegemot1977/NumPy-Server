@@ -1,3 +1,5 @@
+Please replace all content in main.py with this code exactly:
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 import numpy as np
@@ -73,4 +75,4 @@ def calculate_poly(data: PumpData):
         return {"error": f"Ошибка: {str(e)}"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=5000)
+    uvicorn.run(app, host="0.0.0.0", port=8080)
